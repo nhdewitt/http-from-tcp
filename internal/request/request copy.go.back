@@ -1,0 +1,89 @@
+package request
+
+import (
+	"bytes"
+	"fmt"
+	"io"
+	"strings"
+)
+
+const (
+	crlf        = "\r\n"
+	INITIALIZED = 0
+	DONE        = 1
+)
+
+type Request struct {
+	RequestLine RequestLine
+	State       int // INITIALIZED (0), DONE (1)
+}
+
+type RequestLine struct {
+	HttpVersion   string
+	RequestTarget string
+	Method        string
+}
+
+func RequestFromReader(reader io.Reader) (*Request, error) {
+	req, err := io.ReadAll(reader)
+	if err != nil {
+		return &Request{}, fmt.Errorf("error reading request: %v", err)
+	}
+
+	requestLine, err := parseRequestLine(req)
+	if err != nil {
+		return &Request{}, err
+	}
+
+	return &Request{RequestLine: *requestLine}, nil
+}
+
+func parseRequestLine(req []byte) (*RequestLine, error) {
+	idx := bytes.Index(req, []byte(crlf))
+	if idx == -1 {
+		return nil, fmt.Errorf("could not find CRLF in request-line")
+	}
+
+	requestLine, err := requestLineFromString(string(req[:idx]))
+	if err != nil {
+		return nil, err
+	}
+
+	return requestLine, nil
+}
+
+func requestLineFromString(s string) (*RequestLine, error) {
+	parts := strings.Split(s, " ")
+	if len(parts) != 3 {
+		return nil, fmt.Errorf("invalid request line: %s", s)
+	}
+
+	method := parts[0]
+	for _, c := range method {
+		if c < 'A' || c > 'Z' {
+			return nil, fmt.Errorf("invalid method: %s", method)
+		}
+	}
+
+	target := parts[1]
+
+	httpVersion := strings.Split(parts[2], "/")
+	if len(httpVersion) != 2 {
+		return nil, fmt.Errorf("invalid start line: %s", s)
+	}
+
+	protocol := httpVersion[0]
+	if protocol != "HTTP" {
+		return nil, fmt.Errorf("invalid HTTP version: %s", httpVersion)
+	}
+	version := httpVersion[1]
+	if version != "1.1" {
+		return nil, fmt.Errorf("invalid HTTP version: %s", httpVersion)
+	}
+
+	return &RequestLine{
+		Method:        method,
+		RequestTarget: target,
+		HttpVersion:   version,
+	}, nil
+}
