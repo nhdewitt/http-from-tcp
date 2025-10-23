@@ -32,7 +32,7 @@ func (h Headers) Parse(data []byte) (n int, done bool, err error) {
 	prefix := fields[:colonIdx]
 	name := bytes.TrimLeft(prefix, " \t")
 
-	if len(name) == 0 || bytes.ContainsAny(name, " \t") {
+	if len(name) == 0 || bytes.ContainsAny(prefix, " \t") {
 		return 0, false, fmt.Errorf("malformed field-name: %q", fields)
 	}
 

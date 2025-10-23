@@ -30,12 +30,8 @@ func TestRequestLineParse(t *testing.T) {
 	// Test: Valid header with leading whitespace
 	headers = NewHeaders()
 	data = []byte(" Host: localhost:42069 \r\n")
-	n, done, err = headers.Parse(data)
-	require.NoError(t, err)
-	require.NotNil(t, headers)
-	assert.Equal(t, "localhost:42069", headers["host"])
-	assert.Equal(t, 25, n)
-	assert.False(t, done)
+	_, _, err = headers.Parse(data)
+	require.Error(t, err)
 
 	// Test: Invalid spacing header
 	headers = NewHeaders()

@@ -74,3 +74,108 @@ func TestRequestLineParse(t *testing.T) {
 	_, err = RequestFromReader(reader)
 	require.Error(t, err)
 }
+
+func TestFullSetOfHeaders(t *testing.T) {
+	// Test: Standard Headers
+	reader := &chunkReader{
+		data:            "GET / HTTP/1.1\r\nHost: localhost:42069\r\nUser-Agent: curl/7.81.0\r\nAccept: */*\r\n\r\n",
+		numBytesPerRead: 3,
+	}
+	r, err := RequestFromReader(reader)
+	require.NoError(t, err)
+	require.NotNil(t, r)
+	assert.Equal(t, "localhost:42069", r.Headers["host"])
+	assert.Equal(t, "curl/7.81.0", r.Headers["user-agent"])
+	assert.Equal(t, "*/*", r.Headers["accept"])
+
+	// Test: Malformed Header
+	reader = &chunkReader{
+		data:            "GET / HTTP/1.1\r\nHost localhost:42069\r\n\r\n",
+		numBytesPerRead: 3,
+	}
+	_, err = RequestFromReader(reader)
+	require.Error(t, err)
+
+	// Test: Empty Headers
+	reader = &chunkReader{
+		data:            "GET / HTTP/1.1\r\n\r\n",
+		numBytesPerRead: 1,
+	}
+	r, err = RequestFromReader(reader)
+	require.NoError(t, err)
+	assert.Empty(t, r.Headers)
+	assert.Equal(t, stateDone, r.state)
+
+	// Test: Case-Insensitive Headers
+	reader = &chunkReader{
+		data:            "GET / HTTP/1.1\r\nhOsT: localhost:42069\r\nUSER-AGENT: curl/7.81.0\r\n\r\n",
+		numBytesPerRead: 10,
+	}
+	r, err = RequestFromReader(reader)
+	require.NoError(t, err)
+	assert.Equal(t, "localhost:42069", r.Headers["host"])
+	assert.Equal(t, "curl/7.81.0", r.Headers["user-agent"])
+
+	// Test: Duplicate Headers
+	reader = &chunkReader{
+		data:            "GET / HTTP/1.1\r\nAccept: a\r\nAccept: b\r\n\r\n",
+		numBytesPerRead: 20,
+	}
+	r, err = RequestFromReader(reader)
+	require.NoError(t, err)
+	assert.Equal(t, "a, b", r.Headers["accept"])
+
+	// Test: Leading/Trailing Whitespace
+	reader = &chunkReader{
+		data:            "GET / HTTP/1.1\r\nHost: localhost \r\nUser-Agent:\tcurl\r\n\r\n",
+		numBytesPerRead: 1,
+	}
+	r, err = RequestFromReader(reader)
+	require.NoError(t, err)
+	assert.Equal(t, "localhost", r.Headers["host"])
+	assert.Equal(t, "curl", r.Headers["user-agent"])
+
+	// Test: Malformed Variants
+	cases := []struct {
+		data string
+	}{
+		{"GET / HTTP/1.1\r\nHost localhost\r\n\r\n"},
+		{"GET / HTTP/1.1\r\nHost : val\r\n\r\n"},
+		{"GET / HTTP/1.1\r\nH©st: localhost:42069\r\n\r\n"},
+	}
+	for _, c := range cases {
+		for _, chunk := range []int{1, 2, 3, 4, 5, len(c.data)} {
+			reader := &chunkReader{data: c.data, numBytesPerRead: chunk}
+			_, err := RequestFromReader(reader)
+			require.Error(t, err)
+		}
+	}
+
+	// Test: Multiple Headers in One Read
+	reader = &chunkReader{
+		data:            "GET / HTTP/1.1\r\nHost: localhost:42069\r\nUser-Agent: curl\r\nAccept: a\r\nAccept: b\r\nAccept: c\r\nLanguage: en-US\r\n\r\n",
+		numBytesPerRead: len(reader.data),
+	}
+	r, err = RequestFromReader(reader)
+	require.NoError(t, err)
+	assert.Equal(t, "localhost:42069", r.Headers["host"])
+	assert.Equal(t, "curl", r.Headers["user-agent"])
+	assert.Equal(t, "a, b, c", r.Headers["accept"])
+	assert.Equal(t, "en-US", r.Headers["language"])
+
+	// Test: Missing End of Headers
+	reader = &chunkReader{
+		data:            "GET / HTTP/1.1\r\nHost: localhost:42069\r\n",
+		numBytesPerRead: 3,
+	}
+	_, err = RequestFromReader(reader)
+	require.Error(t, err)
+
+	// Test: Line beginning with ws raises error
+	reader = &chunkReader{
+		data:            "GET / HTTP/1.1\r\n Foo: bar\r\n\r\n",
+		numBytesPerRead: 3,
+	}
+	_, err = RequestFromReader(reader)
+	require.Error(t, err)
+}
