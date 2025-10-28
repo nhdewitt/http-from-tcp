@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"strconv"
 	"strings"
 
 	h "github.com/nhdewitt/http-from-tcp/internal/headers"
@@ -17,6 +18,7 @@ const (
 	crlf                          = "\r\n"
 	stateInitialized requestState = iota
 	stateParsingHeaders
+	stateParsingBody
 	stateDone
 )
 
@@ -24,6 +26,7 @@ type Request struct {
 	RequestLine RequestLine
 	Headers     h.Headers
 	state       requestState
+	Body        []byte
 }
 
 type RequestLine struct {
@@ -38,6 +41,7 @@ func RequestFromReader(reader io.Reader) (*Request, error) {
 
 	r := Request{
 		Headers: h.Headers{},
+		Body:    []byte{},
 		state:   stateInitialized,
 	}
 
@@ -63,7 +67,13 @@ func RequestFromReader(reader io.Reader) (*Request, error) {
 
 		if err != nil {
 			if errors.Is(err, io.EOF) {
-				if r.state != stateDone {
+				if r.state == stateParsingBody {
+					contentLength, _ := strconv.Atoi(r.Headers.Get("content-length"))
+					if len(r.Body) < contentLength {
+						return nil, fmt.Errorf("body shorter than content-length")
+					}
+				}
+				if r.state != stateDone && r.state != stateParsingBody {
 					return nil, fmt.Errorf("error parsing data: early EOF")
 				}
 				break
@@ -105,10 +115,37 @@ func (r *Request) parse(data []byte) (int, error) {
 			totalBytesParsed += n
 
 			if done {
-				r.state = stateDone
+				r.state = stateParsingBody
+				contentLength := r.Headers.Get("content-length")
+				if contentLength == "" {
+					r.state = stateDone
+				}
 				return totalBytesParsed, nil
 			}
 		}
+
+	case stateParsingBody:
+		contentLength := r.Headers.Get("content-length")
+		length, err := strconv.Atoi(contentLength)
+		if err != nil {
+			return 0, fmt.Errorf("error: malformed content-length header")
+		}
+		remaining := length - len(r.Body)
+		if remaining <= 0 {
+			return 0, fmt.Errorf("error: body exceeds content-length")
+		}
+		take := min(len(data), remaining)
+		r.Body = append(r.Body, data[:take]...)
+		consumed := take
+
+		if len(r.Body) == length {
+			r.state = stateDone
+			return consumed, nil
+		} else if len(r.Body) > length {
+			return consumed, fmt.Errorf("error: body exceeds content-length")
+		}
+
+		return consumed, nil
 	case stateDone:
 		return 0, fmt.Errorf("error: trying to read data in a done state")
 	default:
