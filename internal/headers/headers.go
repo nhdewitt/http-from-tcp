@@ -13,6 +13,10 @@ const (
 
 type Headers map[string]string
 
+func NewHeaders() Headers {
+	return map[string]string{}
+}
+
 func (h Headers) Parse(data []byte) (n int, done bool, err error) {
 	idx := bytes.Index(data, []byte(crlf))
 	if idx == -1 {
@@ -62,16 +66,21 @@ func (h Headers) Parse(data []byte) (n int, done bool, err error) {
 
 func (h Headers) Set(key, value string) {
 	key = strings.ToLower(key)
-	if _, ok := h[key]; ok {
+	if _, ok := h[strings.ToLower(key)]; ok {
 		h[key] += ", " + value
 		return
 	}
 	h[key] = value
 }
 
+func (h Headers) SetNew(key, value string) {
+	key = strings.ToLower(key)
+	h[key] = value
+}
+
 func (h Headers) Get(key string) (value string) {
 	key = strings.ToLower(key)
-	if v, ok := h[key]; ok {
+	if v, ok := h[strings.ToLower(key)]; ok {
 		return v
 	}
 	return ""

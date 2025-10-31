@@ -10,41 +10,6 @@ import (
 
 const port = ":42069"
 
-/* func getLinesChannel(f io.ReadCloser) <-chan string {
-	out := make(chan string)
-
-	currentLine := ""
-	go func() {
-		defer close(out)
-		defer f.Close()
-
-		buf := make([]byte, 8)
-		for {
-			n, err := f.Read(buf)
-			if n > 0 {
-				parts := strings.Split(string(buf[:n]), "\n")
-				for i := 0; i < len(parts)-1; i++ {
-					out <- strings.TrimSuffix(currentLine+parts[i], "\r")
-					currentLine = ""
-				}
-				currentLine += parts[len(parts)-1]
-			}
-			if errors.Is(err, io.EOF) {
-				if currentLine != "" {
-					out <- strings.TrimSuffix(currentLine, "\r")
-					currentLine = ""
-				}
-				return
-			}
-			if err != nil {
-				return
-			}
-		}
-	}()
-
-	return out
-} */
-
 func main() {
 	listener, err := net.Listen("tcp", port)
 	if err != nil {

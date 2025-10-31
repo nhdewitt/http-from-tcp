@@ -1,6 +1,8 @@
 module github.com/nhdewitt/http-from-tcp
 
-go 1.23.6
+go 1.24.0
+
+require golang.org/x/text v0.30.0
 
 require (
 	github.com/davecgh/go-spew v1.1.1 // indirect
