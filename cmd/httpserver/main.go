@@ -34,8 +34,11 @@ func Handler(w *response.Writer, req *request.Request) {
 	if strings.HasPrefix(target, "/httpbin") {
 		proxy(target, w)
 		return
+	} else if strings.HasPrefix(target, "/video") {
+		serveVideo(w)
+		return
 	}
-	switch req.RequestLine.RequestTarget {
+	switch target {
 	case "/yourproblem":
 		statusCode = 400
 	case "/myproblem":
@@ -82,6 +85,23 @@ func Handler(w *response.Writer, req *request.Request) {
 	w.WriteHeaders(h)
 	n, err := w.WriteBody(body)
 	if n != bodyBytes || err != nil {
+		return
+	}
+}
+
+func serveVideo(w *response.Writer) {
+	video, err := os.ReadFile("assets/vim.mp4")
+	if err != nil {
+		return
+	}
+
+	w.WriteStatusLine(200)
+	h := response.GetDefaultHeaders(len(video))
+	h.SetNew("Content-Type", "video/mp4")
+	if err := w.WriteHeaders(h); err != nil {
+		return
+	}
+	if _, err := w.WriteBody(video); err != nil {
 		return
 	}
 }
