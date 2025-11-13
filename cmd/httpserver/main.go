@@ -1,10 +1,14 @@
 package main
 
 import (
+	"crypto/sha256"
 	"fmt"
+	"io"
 	"log"
+	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 
 	"github.com/nhdewitt/http-from-tcp/internal/request"
@@ -18,10 +22,19 @@ type htmlTemplate struct {
 	explanation []byte
 }
 
-const port = 42069
+const (
+	buffer   = 1024
+	port     = 42069
+	upstream = "https://httpbin.org/"
+)
 
 func Handler(w *response.Writer, req *request.Request) {
 	var statusCode response.StatusCode
+	target := req.RequestLine.RequestTarget
+	if strings.HasPrefix(target, "/httpbin") {
+		proxy(target, w)
+		return
+	}
 	switch req.RequestLine.RequestTarget {
 	case "/yourproblem":
 		statusCode = 400
@@ -62,13 +75,68 @@ func Handler(w *response.Writer, req *request.Request) {
 	</body>
 </html>
 	`, ht.status, ht.description, ht.explanation)
-	contentLength := len(body)
+	bodyBytes := len(body)
 
-	h := response.GetDefaultHeaders(contentLength)
+	h := response.GetDefaultHeaders(bodyBytes)
 	h.SetNew("Content-Type", "text/html")
 	w.WriteHeaders(h)
 	n, err := w.WriteBody(body)
-	if n != contentLength || err != nil {
+	if n != bodyBytes || err != nil {
+		return
+	}
+}
+
+func proxy(target string, w *response.Writer) {
+	target = strings.TrimPrefix(target, "/httpbin")
+	if !strings.HasPrefix(target, "/") {
+		target = "/" + target
+	}
+	url := upstream + target
+
+	var resp *http.Response
+	resp, err := http.Get(url)
+	if err != nil {
+		_ = w.WriteStatusLine(502)
+		return
+	}
+	defer resp.Body.Close()
+
+	if err = w.WriteStatusLine(response.StatusCode(resp.StatusCode)); err != nil {
+		return
+	}
+
+	h := response.GetDefaultHeaders(0)
+	h.SetNew("Content-Type", resp.Header.Get("Content-Type"))
+	h.Del("Content-Length")
+	h.SetNew("Transfer-Encoding", "chunked")
+	h.SetNew("Trailer", "X-Content-SHA256, X-Content-Length")
+	if err := w.WriteHeaders(h); err != nil {
+		return
+	}
+
+	b := make([]byte, buffer)
+	var bodyBytes []byte
+	for {
+		n, rerr := resp.Body.Read(b)
+		if n > 0 {
+			if _, err := w.WriteChunkedBody(b[:n]); err != nil {
+				return
+			}
+			bodyBytes = append(bodyBytes, b[:n]...)
+		}
+		if rerr == io.EOF {
+			break
+		}
+		if rerr != nil {
+			if len(bodyBytes) != 0 {
+				break
+			}
+			return
+		}
+	}
+	h.SetNew("X-Content-Length", fmt.Sprintf("%d", len(bodyBytes)))
+	h.SetNew("X-Content-SHA256", fmt.Sprintf("%x", sha256.Sum256(bodyBytes)))
+	if _, err = w.WriteChunkedBodyDone(h); err != nil {
 		return
 	}
 }

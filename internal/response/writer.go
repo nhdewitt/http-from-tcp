@@ -1,13 +1,11 @@
 package response
 
 import (
-	"errors"
 	"fmt"
 	"io"
+	"strings"
 
 	"github.com/nhdewitt/http-from-tcp/internal/headers"
-	"golang.org/x/text/cases"
-	"golang.org/x/text/language"
 )
 
 type writerState int
@@ -36,15 +34,19 @@ func (w *Writer) WriteStatusLine(statusCode StatusCode) error {
 		return fmt.Errorf("writer state out-of-order")
 	}
 
+	var line string
 	switch statusCode {
 	case StatusOK:
-		w.writer.Write([]byte("HTTP/1.1 200 OK\r\n"))
+		line = "HTTP/1.1 200 OK\r\n"
 	case StatusBadRequest:
-		w.writer.Write([]byte("HTTP/1.1 400 Bad Request\r\n"))
+		line = "HTTP/1.1 400 Bad Request\r\n"
 	case StatusInternalServerError:
-		w.writer.Write([]byte("HTTP/1.1 500 Internal Server Error\r\n"))
+		line = "HTTP/1.1 500 Internal Server Error\r\n"
 	default:
-		w.writer.Write([]byte(""))
+		return fmt.Errorf("unknown status code: %d", statusCode)
+	}
+	if _, err := w.writer.Write([]byte(line)); err != nil {
+		return err
 	}
 
 	w.state = StateWritingHeaders
@@ -56,15 +58,18 @@ func (w *Writer) WriteHeaders(headers headers.Headers) error {
 		return fmt.Errorf("writer state out-of-order")
 	}
 
-	caser := cases.Title(language.English)
 	for k, v := range headers {
-		line := caser.String(k) + ": " + v
-		_, err := w.writer.Write([]byte(line + "\r\n"))
-		if err != nil {
-			return errors.New("error writing headers")
+		if v == "" {
+			continue
+		}
+		h := k + ": " + v + "\r\n"
+		if _, err := w.writer.Write([]byte(h)); err != nil {
+			return err
 		}
 	}
-	w.writer.Write([]byte("\r\n"))
+	if _, err := w.writer.Write([]byte("\r\n")); err != nil {
+		return err
+	}
 
 	w.state = StateWritingBody
 	return nil
@@ -77,4 +82,65 @@ func (w *Writer) WriteBody(p []byte) (int, error) {
 
 	w.state = StateDone
 	return w.writer.Write(p)
+}
+
+func (w *Writer) WriteChunkedBody(p []byte) (int, error) {
+	if w.state != StateWritingBody {
+		return 0, fmt.Errorf("writer state out-of-order")
+	}
+
+	n := len(p)
+	if n == 0 {
+		return 0, nil
+	}
+
+	if _, err := w.writer.Write([]byte(fmt.Sprintf("%X\r\n", n))); err != nil {
+		return 0, err
+	}
+	if _, err := w.writer.Write(p); err != nil {
+		return 0, err
+	}
+	if _, err := w.writer.Write([]byte("\r\n")); err != nil {
+		return 0, err
+	}
+	return n, nil
+}
+
+func (w *Writer) WriteChunkedBodyDone(h headers.Headers) (int, error) {
+	if w.state != StateWritingBody {
+		return 0, fmt.Errorf("writer state out-of-order")
+	}
+	if _, err := w.writer.Write([]byte("0\r\n")); err != nil {
+		return 0, err
+	}
+	if err := w.WriteTrailers(h); err != nil {
+		return 0, err
+	}
+	if _, err := w.writer.Write([]byte("\r\n")); err != nil {
+		return 0, err
+	}
+	w.state = StateDone
+	return 0, nil
+}
+
+func (w *Writer) WriteTrailers(h headers.Headers) error {
+	t := h.Get("Trailer")
+	if len(t) == 0 {
+		return nil
+	}
+
+	for k := range strings.SplitSeq(t, ",") {
+		k = strings.TrimSpace(k)
+		if len(k) == 0 {
+			continue
+		}
+		v := h.Get(k)
+		if len(v) == 0 {
+			continue
+		}
+		if _, err := w.writer.Write([]byte(k + ": " + v + "\r\n")); err != nil {
+			return err
+		}
+	}
+	return nil
 }
